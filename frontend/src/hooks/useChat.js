@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { sendMessage, getWelcome, resetSession, generateSessionId } from '../utils/api';
+import { sendMessage, getWelcome, resetSession, getSession, generateSessionId } from '../utils/api';
 
 export function useChat() {
     const [messages, setMessages] = useState([]);
@@ -81,5 +81,34 @@ export function useChat() {
         initialized.current = true;
     }, [sessionId]);
 
-    return { messages, isLoading, sessionId, status, latency, send, reset };
+    // Load a previous session by ID — restores full history + context
+    const loadSession = useCallback(async (targetSessionId) => {
+        setIsLoading(true);
+        try {
+            const data = await getSession(targetSessionId);
+            setSessionId(targetSessionId);
+            setStatus(data.status || 'active');
+
+            // Convert backend history to frontend message format
+            const restored = data.history.map((msg, i) => ({
+                role: msg.role,
+                content: msg.content,
+                timestamp: Date.now() - (data.history.length - i) * 1000,
+            }));
+
+            setMessages(restored.length > 0 ? restored : [{
+                role: 'assistant',
+                content: "Hi! I'm Daraz Assistant 🛍️, your personal shopping guide for Daraz.pk. What are you looking to buy today?",
+                timestamp: Date.now(),
+            }]);
+
+            initialized.current = true;
+        } catch (err) {
+            console.error('Failed to load session:', err);
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
+    return { messages, isLoading, sessionId, status, latency, send, reset, loadSession };
 }

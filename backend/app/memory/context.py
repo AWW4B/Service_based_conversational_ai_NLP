@@ -13,6 +13,7 @@ from app.core.config import (
     MAX_TURNS,
     WELCOME_MESSAGE,
 )
+from app.memory.database import save_session, load_session, load_all_sessions_to_memory, init_db
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,14 @@ _STATE_KV_PATTERN = re.compile(
 active_chats: dict[str, dict] = {}
 
 
+def init_sessions_from_db() -> None:
+    """Load all persisted sessions into memory at server startup."""
+    init_db()
+    loaded = load_all_sessions_to_memory()
+    active_chats.update(loaded)
+    logger.info(f"[context] Loaded {len(loaded)} sessions from database")
+
+
 # =============================================================================
 # PUBLIC SESSION API
 # =============================================================================
@@ -59,6 +68,7 @@ active_chats: dict[str, dict] = {}
 def get_or_create_session(session_id: str) -> dict:
     """
     Returns existing session or creates a fresh one.
+    Checks SQLite first if not in memory.
 
     Args:
         session_id (str): Unique session identifier (UUID recommended).
@@ -67,6 +77,13 @@ def get_or_create_session(session_id: str) -> dict:
         dict: Session dict with history, state, turns, status.
     """
     if session_id not in active_chats:
+        # Try loading from database first
+        db_session = load_session(session_id)
+        if db_session:
+            active_chats[session_id] = db_session
+            logger.info(f"[context] Loaded session from DB: {session_id}")
+            return active_chats[session_id]
+
         active_chats[session_id] = {
             "history": [],
             "state": {
@@ -84,7 +101,7 @@ def get_or_create_session(session_id: str) -> dict:
 
 def add_message_to_chat(session_id: str, role: str, text: str) -> None:
     """
-    Appends a message to session history.
+    Appends a message to session history and persists to SQLite.
     Always call with clean text — STATE tag must be stripped before calling.
 
     Args:
@@ -94,6 +111,7 @@ def add_message_to_chat(session_id: str, role: str, text: str) -> None:
     """
     session = get_or_create_session(session_id)
     session["history"].append({"role": role, "content": text})
+    _persist(session_id)
 
 
 def get_chat_history(session_id: str) -> list:
@@ -114,11 +132,13 @@ def get_session_status(session_id: str) -> str:
 def set_session_status(session_id: str, status: str) -> None:
     """Updates session lifecycle status."""
     get_or_create_session(session_id)["status"] = status
+    _persist(session_id)
 
 
 def increment_turn(session_id: str) -> None:
     """Increments completed turn counter after each exchange."""
     get_or_create_session(session_id)["turns"] += 1
+    _persist(session_id)
 
 
 def is_session_maxed(session_id: str) -> bool:
@@ -130,7 +150,12 @@ def reset_session(session_id: str) -> None:
     """
     Wipes history and state for a session.
     Called by /reset endpoint (New Chat button).
+    Old session is preserved in DB; new session gets a fresh ID.
     """
+    # Persist final state of old session before resetting in memory
+    if session_id in active_chats:
+        _persist(session_id)
+
     active_chats[session_id] = {
         "history": [],
         "state": {
@@ -256,3 +281,12 @@ def _update_state_from_block(state: dict, state_block: str) -> None:
             continue
 
         state[key] = value
+
+
+def _persist(session_id: str) -> None:
+    """Saves session to SQLite. Called after any mutation."""
+    if session_id in active_chats:
+        try:
+            save_session(session_id, active_chats[session_id])
+        except Exception as e:
+            logger.error(f"[context] Persistence error for {session_id}: {e}")

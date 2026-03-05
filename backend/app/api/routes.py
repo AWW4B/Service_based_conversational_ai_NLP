@@ -25,6 +25,7 @@ from app.memory.context  import (
     get_or_create_session,
     get_welcome_message,
 )
+from app.memory.database import list_sessions, load_session, delete_session as db_delete_session
 from app.core.config import MAX_TURNS
 
 logger = logging.getLogger(__name__)
@@ -203,13 +204,54 @@ async def welcome(session_id: str):
 async def reset(request: ResetRequest):
     """Clears history and state for a session. Wired to the New Chat button."""
     reset_session(request.session_id)
-
-    # -------------------------------------------------------------------------
-    # [PARTNER TODO — Archive session to DB before wiping if needed]
-    # await db.archive_session(request.session_id)
-    # -------------------------------------------------------------------------
-
     return {"message": f"Session '{request.session_id}' reset.", "status": "active"}
+
+
+# =============================================================================
+# SESSION HISTORY ENDPOINTS — view / load / delete previous chats
+# =============================================================================
+
+@router.get("/sessions", tags=["Session"])
+async def get_all_sessions():
+    """
+    Returns all saved chat sessions, ordered by most recent.
+    Used by the session sidebar in the frontend.
+    """
+    return {"sessions": list_sessions()}
+
+
+@router.get("/sessions/{session_id}", tags=["Session"])
+async def get_session(session_id: str):
+    """
+    Loads a specific session with full message history.
+    Used when a user clicks a previous chat to resume/view it.
+    The context is fully restored so the model knows the conversation state.
+    """
+    # This triggers get_or_create_session which loads from DB if needed
+    session = get_or_create_session(session_id)
+    return {
+        "session_id"    : session_id,
+        "history"       : session["history"],
+        "state"         : session["state"],
+        "turns"         : session["turns"],
+        "status"        : session["status"],
+        "turns_max"     : MAX_TURNS,
+    }
+
+
+@router.delete("/sessions/{session_id}", tags=["Session"])
+async def delete_session_endpoint(session_id: str):
+    """
+    Deletes a session from both memory and database.
+    Used when user removes a chat from history.
+    """
+    from app.memory.context import active_chats
+    if session_id in active_chats:
+        del active_chats[session_id]
+    success = db_delete_session(session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return {"message": f"Session '{session_id}' deleted."}
 
 
 # =============================================================================

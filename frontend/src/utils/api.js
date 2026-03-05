@@ -32,6 +32,24 @@ export async function healthCheck() {
     return res.json();
 }
 
+export async function getSessions() {
+    const res = await fetch(`${API_BASE}/sessions`);
+    if (!res.ok) throw new Error(`Sessions API error: ${res.status}`);
+    return res.json();
+}
+
+export async function getSession(sessionId) {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
+    if (!res.ok) throw new Error(`Session API error: ${res.status}`);
+    return res.json();
+}
+
+export async function deleteSession(sessionId) {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Delete session error: ${res.status}`);
+    return res.json();
+}
+
 export function generateSessionId() {
     return crypto.randomUUID?.() || `sess-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }

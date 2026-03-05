@@ -1,14 +1,16 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import ChatHeader from './ChatHeader';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import QuickActions from './QuickActions';
 import InputBar from './InputBar';
+import SessionSidebar from './SessionSidebar';
 
 export default function ChatWindow({ chat, onMinimize, onClose }) {
-    const { messages, isLoading, status, send, reset } = chat;
+    const { messages, isLoading, sessionId, status, send, reset, loadSession } = chat;
     const scrollRef = useRef(null);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
 
     // Auto-scroll to bottom on new messages
     useEffect(() => {
@@ -22,7 +24,21 @@ export default function ChatWindow({ chat, onMinimize, onClose }) {
     return (
         <div className="flex flex-col h-full bg-[#f5f5f5] rounded-2xl shadow-2xl overflow-hidden border border-gray-200">
             {/* Header */}
-            <ChatHeader onReset={reset} onMinimize={onMinimize} onClose={onClose} />
+            <ChatHeader
+                onReset={reset}
+                onMinimize={onMinimize}
+                onClose={onClose}
+                onToggleHistory={() => setSidebarOpen(prev => !prev)}
+            />
+
+            {/* Session history sidebar */}
+            <SessionSidebar
+                currentSessionId={sessionId}
+                onLoadSession={loadSession}
+                onNewChat={reset}
+                isOpen={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+            />
 
             {/* Messages area */}
             <div

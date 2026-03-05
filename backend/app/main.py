@@ -31,8 +31,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # --- Startup ---
     logger.info("🚀 Daraz Assistant starting up...")
-    # Model is loaded at import time in engine.py (module-level singleton).
-    # Nothing extra needed here — just log confirmation.
+    # Initialize database and load persisted sessions
+    from app.memory.context import init_sessions_from_db
+    init_sessions_from_db()
     logger.info("✅ Startup complete. API ready.")
     yield
     # --- Shutdown ---

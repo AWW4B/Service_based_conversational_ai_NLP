@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
-import { ShoppingBag, RotateCcw, X, Minus } from 'lucide-react';
+import { ShoppingBag, RotateCcw, X, Minus, History } from 'lucide-react';
 
-export default function ChatHeader({ onReset, onMinimize, onClose }) {
+export default function ChatHeader({ onReset, onMinimize, onClose, onToggleHistory }) {
     return (
         <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -27,6 +27,15 @@ export default function ChatHeader({ onReset, onMinimize, onClose }) {
 
             {/* Right: Actions */}
             <div className="flex items-center gap-1">
+                {onToggleHistory && (
+                    <button
+                        onClick={onToggleHistory}
+                        title="Chat History"
+                        className="p-2 rounded-full hover:bg-white/20 transition-colors"
+                    >
+                        <History size={16} />
+                    </button>
+                )}
                 <button
                     onClick={onReset}
                     title="New Chat"
