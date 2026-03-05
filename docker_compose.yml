@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./models:/app/models
+    environment:
+      - MODEL_PATH=/app/models/qwen2.5-1.5b-instruct-q4_k_m.gguf
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html
+    restart: unless-stopped
+```
+
+---
+
+## Step 4: Add a `.gitignore` entry for the model
+
+Your model is 1.12GB — **never push it to git.** Add this to your `.gitignore` at the project root:
+```
+# Model files
+models/
+*.gguf
+
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+.env
