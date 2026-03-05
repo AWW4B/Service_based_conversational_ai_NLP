@@ -1,9 +1,7 @@
 # =============================================================================
 # llm/engine.py
-# Purpose : Loads the Qwen2.5-1.5B-Instruct-Q4_K_M GGUF model via
-#           llama-cpp-python and exposes a single generate() function.
-#           Integrates with context.py for state extraction and prompt
-#           assembly, and with config.py for ChatML formatting.
+# Purpose : Loads the Qwen2.5 GGUF model via llama-cpp-python and exposes
+#           a single generate() function.
 # Optimised for: 4-core Intel i5 8th Gen, CPU-only inference, no RAG.
 # =============================================================================
 
@@ -12,11 +10,17 @@ import time
 import logging
 from llama_cpp import Llama
 
-from app.core.config    import build_chatml_prompt
+from app.core.config import build_chatml_prompt, MAX_TURNS
 from app.memory.context import (
+    active_chats,
     build_inference_payload,
     add_message_to_chat,
     extract_and_strip_state,
+    increment_turn,
+    is_session_maxed,
+    get_session_status,
+    set_session_status,
+    is_closing_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,43 +53,24 @@ class LLMEngine:
         """
         Loads the GGUF model from the path set in the MODEL_PATH env variable.
         Falls back to a default relative path for local development.
-        If loading fails the server still starts — responses will degrade
+        If loading fails the server still starts — responses degrade
         gracefully rather than crashing the entire process.
         """
         model_path = os.getenv(
             "MODEL_PATH",
-            # Default path matches docker-compose volume + local dev layout
-            "./models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-            
+            "./models/qwen2.5-3b-instruct-q4_k_m.gguf"
         )
 
         logger.info(f"[engine] Loading model from: {model_path}")
 
         try:
             self.model = Llama(
-                model_path = model_path,
-
-                # --- Context window ---
-                # 4096 is safe for 8 GB RAM + 1.12 GB model.
-                # Do NOT raise this above 4096 on a 4-core i5.
-                n_ctx      = 4096,
-
-                # --- CPU threading ---
-                # Match physical core count exactly. Hyperthreading does NOT
-                # help llama.cpp — using logical cores (8) actually slows it.
-                n_threads  = 4,
-
-                # --- Batch size ---
-                # 512 tokens processed per forward pass. Good balance between
-                # throughput and memory pressure on a laptop CPU.
-                n_batch    = 512,
-
-                # --- GPU layers ---
-                # 0 = full CPU inference (required — no GPU assumed).
-                n_gpu_layers = 0,
-
-                # Suppress llama.cpp's verbose C++ logs in production.
-                verbose    = False,
+                model_path   = model_path,
+                n_ctx        = 4096,     # safe for i5 8th gen RAM budget
+                n_threads    = 4,        # match physical core count exactly
+                n_batch      = 512,      # tokens per forward pass
+                n_gpu_layers = 0,        # CPU-only inference
+                verbose      = False,    # suppress llama.cpp C++ logs
             )
             logger.info("✅ [engine] Model loaded successfully.")
 
@@ -103,43 +88,83 @@ class LLMEngine:
     # -------------------------------------------------------------------------
     def generate(self, session_id: str, user_message: str) -> dict:
         """
-        Main entry point called by your partner's routes.py.
+        Main entry point called by routes.py for every user message.
 
-        Full pipeline per call:
-        1. Build sliding-window + state-injected message list (context.py).
-        2. Format it as a ChatML string (config.py).
-        3. Run llama-cpp-python inference.
-        4. Strip <STATE> tag, update session state (context.py).
-        5. Persist the clean turn to session history (context.py).
-        6. Return structured result dict.
-
-        Args:
-            session_id   (str): UUID identifying the active chat session.
-            user_message (str): Raw text the user just sent.
-
-        Returns:
-            dict: {
-                "response"   : str,    # clean assistant reply shown to user
-                "latency_ms" : float,  # end-to-end inference time in ms
-                "session_id" : str,
-            }
+        Pipeline:
+        1. Guard checks (model loaded, session status, turn limit, closing)
+        2. Build sliding-window + state-injected message list (context.py)
+        3. Format as ChatML string (config.py)
+        4. Run llama-cpp-python inference
+        5. Strip <STATE> tag, update session state (context.py)
+        6. Persist clean turn to session history
+        7. Increment turn counter, update session status
+        8. Return structured result dict to routes.py
         """
-        # --- Guard: model failed to load ---
+
+        # --- Guard 0: Model failed to load ---
         if self.model is None:
             return {
                 "response"   : "I'm sorry, the assistant is temporarily unavailable. Please try again later.",
                 "latency_ms" : 0.0,
                 "session_id" : session_id,
+                "status"     : "error",
+                "turns_used" : 0,
+                "turns_max"  : MAX_TURNS,
+            }
+
+        # --- Guard 1: Session already ended ---
+        if get_session_status(session_id) == "ended":
+            return {
+                "response"   : "This chat session has ended. Please start a new chat.",
+                "latency_ms" : 0.0,
+                "session_id" : session_id,
+                "status"     : "ended",
+                "turns_used" : active_chats[session_id]["turns"],
+                "turns_max"  : MAX_TURNS,
+            }
+
+        # --- Guard 2: Turn limit hit ---
+        if is_session_maxed(session_id):
+            set_session_status(session_id, "ended")
+            farewell = (
+                "We've reached the end of our session. "
+                "Thank you for shopping with Daraz Assistant! Have a great day. 🛍️"
+            )
+            add_message_to_chat(session_id, "user",      user_message)
+            add_message_to_chat(session_id, "assistant", farewell)
+            return {
+                "response"   : farewell,
+                "latency_ms" : 0.0,
+                "session_id" : session_id,
+                "status"     : "ended",
+                "turns_used" : active_chats[session_id]["turns"],
+                "turns_max"  : MAX_TURNS,
+            }
+
+        # --- Guard 3: User is closing the conversation ---
+        # Only triggers if the model previously asked "anything else?"
+        # which set the status to "closing" in a prior turn.
+        if is_closing_message(user_message) and get_session_status(session_id) == "closing":
+            set_session_status(session_id, "ended")
+            farewell = "Thank you for shopping with Daraz Assistant! Have a great day. 🛍️"
+            add_message_to_chat(session_id, "user",      user_message)
+            add_message_to_chat(session_id, "assistant", farewell)
+            return {
+                "response"   : farewell,
+                "latency_ms" : 0.0,
+                "session_id" : session_id,
+                "status"     : "ended",
+                "turns_used" : active_chats[session_id]["turns"],
+                "turns_max"  : MAX_TURNS,
             }
 
         # --- Step 1: Build the inference payload ---
-        # context.py applies the sliding window, injects extracted state into
-        # the system prompt, and appends the new user message.
+        # context.py applies the sliding window, injects extracted state
+        # into the system prompt, and appends the new user message.
         messages = build_inference_payload(session_id, user_message)
 
         # --- Step 2: Format to ChatML string ---
         prompt = build_chatml_prompt(messages)
-
         logger.debug(f"[engine] [{session_id}] Prompt length: {len(prompt)} chars")
 
         # --- Step 3: Inference ---
@@ -148,22 +173,12 @@ class LLMEngine:
         try:
             raw_output = self.model(
                 prompt,
-
-                # Max tokens the model may generate in a single turn.
-                # 512 keeps responses concise and fast on CPU.
-                max_tokens  = 512,
-
-                # Stop tokens for Qwen2.5 ChatML format.
-                # These prevent the model from role-playing both sides.
-                stop        = ["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
-
-                # Do not repeat the prompt in the output.
-                echo        = False,
-
-                # Sampling parameters — conservative for a factual assistant.
-                temperature = 0.7,   # slight creativity without hallucination
-                top_p       = 0.9,   # nucleus sampling
-                repeat_penalty = 1.1 # mild penalty to reduce repetition
+                max_tokens     = 512,
+                stop           = ["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
+                echo           = False,
+                temperature    = 0.7,
+                top_p          = 0.9,
+                repeat_penalty = 1.1,
             )
             raw_text = raw_output["choices"][0]["text"].strip()
 
@@ -173,25 +188,38 @@ class LLMEngine:
                 "response"   : "Something went wrong during inference. Please try again.",
                 "latency_ms" : 0.0,
                 "session_id" : session_id,
+                "status"     : get_session_status(session_id),
+                "turns_used" : active_chats[session_id]["turns"],
+                "turns_max"  : MAX_TURNS,
             }
 
         latency_ms = (time.perf_counter() - start) * 1000
         logger.info(f"[engine] [{session_id}] Inference complete in {latency_ms:.1f}ms")
 
         # --- Step 4: Strip <STATE> tag and update session state ---
-        # extract_and_strip_state() mutates the session's state dict in-place
-        # and returns the clean text the user should see.
         clean_response = extract_and_strip_state(session_id, raw_text)
 
         # --- Step 5: Persist this clean turn to history ---
-        # We store user message first, then assistant — always in order.
         add_message_to_chat(session_id, "user",      user_message)
         add_message_to_chat(session_id, "assistant", clean_response)
+
+        # --- Step 6: Detect closing question from model ---
+        # If the model ended with "anything else?", set status to closing
+        # so the next user "no/bye" triggers the farewell guard above.
+        if "anything else" in clean_response.lower():
+            set_session_status(session_id, "closing")
+
+        # --- Step 7: Increment turn counter ---
+        increment_turn(session_id)
+        session = active_chats[session_id]
 
         return {
             "response"   : clean_response,
             "latency_ms" : round(latency_ms, 2),
             "session_id" : session_id,
+            "status"     : session["status"],   # frontend uses this to lock UI
+            "turns_used" : session["turns"],
+            "turns_max"  : MAX_TURNS,
         }
 
 

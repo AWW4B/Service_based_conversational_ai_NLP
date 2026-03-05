@@ -26,6 +26,7 @@ from app.memory.context  import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+from app.memory.context import get_welcome_message
 
 # =============================================================================
 # REQUEST / RESPONSE SCHEMAS
@@ -253,3 +254,13 @@ async def warmup():
         "message"    : "Warmup complete. Model is ready.",
         "latency_ms" : result["latency_ms"],
     }
+
+    
+@router.get("/session/welcome/{session_id}", tags=["Session"])
+async def welcome(session_id: str):
+    """
+    Call this when a new chat is opened.
+    Returns the welcome message + session metadata.
+    Partner displays this as the first chat bubble.
+    """
+    return get_welcome_message(session_id)

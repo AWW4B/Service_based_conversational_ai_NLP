@@ -9,6 +9,7 @@ import re
 import logging
 from typing import Optional
 from app.core.config import build_system_prompt
+from app.core.config import MAX_TURNS, WELCOME_MESSAGE
 
 logger = logging.getLogger(__name__)
 
@@ -234,3 +235,75 @@ def _update_state_from_block(state: dict, state_block: str) -> None:
             continue
 
         state[key] = value
+
+
+
+# Add 'turns' and 'status' to session structure in get_or_create_session()
+def get_or_create_session(session_id: str) -> dict:
+    if session_id not in active_chats:
+        active_chats[session_id] = {
+            "history" : [],
+            "state"   : {
+                "budget"     : None,
+                "item"       : None,
+                "preferences": None,
+            },
+            "turns"  : 0,       # counts completed user+assistant exchanges
+            "status" : "active" # "active" | "closing" | "ended"
+        }
+        logger.info(f"[context] New session created: {session_id}")
+    return active_chats[session_id]
+
+
+def increment_turn(session_id: str) -> None:
+    """Call this after every completed exchange in engine.py."""
+    session = get_or_create_session(session_id)
+    session["turns"] += 1
+
+
+def is_session_maxed(session_id: str) -> bool:
+    """Returns True if the session has hit the turn limit."""
+    session = get_or_create_session(session_id)
+    return session["turns"] >= MAX_TURNS
+
+
+def get_session_status(session_id: str) -> str:
+    """Returns 'active', 'closing', or 'ended'."""
+    session = get_or_create_session(session_id)
+    return session["status"]
+
+
+def set_session_status(session_id: str, status: str) -> None:
+    """Updates session status. Called by engine.py after detecting closing phrases."""
+    session = get_or_create_session(session_id)
+    session["status"] = status
+
+
+def get_welcome_message(session_id: str) -> dict:
+    """
+    Returns the welcome message payload.
+    Your partner calls this via GET /session/welcome/{session_id}
+    when the WebSocket connection is first established.
+    """
+    get_or_create_session(session_id)  # ensure session exists
+    return {
+        "session_id" : session_id,
+        "response"   : WELCOME_MESSAGE,
+        "latency_ms" : 0.0,
+        "status"     : "active",
+        "turns_used" : 0,
+        "turns_max"  : MAX_TURNS,
+    }
+
+
+# Closing/goodbye phrases to detect in user messages
+_CLOSING_PHRASES = [
+    "no", "nope", "nothing", "that's all", "thats all",
+    "i'm done", "im done", "no thanks", "no thank you",
+    "goodbye", "bye", "thanks", "thank you", "ok bye",
+]
+
+def is_closing_message(message: str) -> bool:
+    """Detects if the user is ending the conversation."""
+    lowered = message.lower().strip()
+    return any(phrase in lowered for phrase in _CLOSING_PHRASES)
