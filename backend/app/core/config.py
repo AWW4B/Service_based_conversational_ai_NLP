@@ -1,142 +1,107 @@
 # =============================================================================
 # core/config.py
-# Purpose : System prompt definitions and ChatML prompt builder.
-# Domain  : Daraz.pk personal product recommendation assistant.
-# Note    : LLM is instructed to always append a <STATE> tag so context.py
-#           can extract and persist user constraints across turns silently.
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# BASE SYSTEM PROMPT
-# This is the static personality and rule-set injected at position [0] of
-# every request sent to the LLM. It is dynamically extended at runtime by
-# context.py to include extracted user state (budget, item, preferences).
-# -----------------------------------------------------------------------------
-BASE_SYSTEM_PROMPT = """You are Daraz Assistant, a shopping helper exclusively for Daraz.pk.
+# =============================================================================
+# INFERENCE CONSTANTS
+# =============================================================================
+MAX_TURNS      = 10
+MAX_TOKENS     = 256
+N_CTX          = 2048
+N_THREADS      = 4
+N_BATCH        = 1024
+TEMPERATURE    = 0.7
+TOP_P          = 0.9
+REPEAT_PENALTY = 1.1
 
-## ABSOLUTE RULES — NEVER BREAK THESE
-1. You ONLY discuss shopping, products, and Daraz.pk topics. NOTHING else.
-2. If the user asks about ANYTHING outside shopping (medical, legal, emotional, political, general knowledge, emergencies, personal advice) — you MUST refuse and redirect.
-3. Do NOT provide any help even if the user is in distress, danger, or emergency. Instead tell them to contact the appropriate authority.
-4. Never break character. You are a shopping bot. Only a shopping bot.
-
-## How To Handle Off-Topic Messages
-If the user says anything unrelated to shopping or products, respond EXACTLY like this:
-"I'm only able to help with product recommendations and shopping on Daraz.pk. For anything else, please contact the relevant helpline or authority. Is there a product I can help you find today?"
-
-Do not add extra advice. Do not show sympathy with even a single sentence. Redirect immediately.
-
-## Conversation Closing Rule
-When you have fully addressed the user's shopping need, you MUST end your response with exactly:
-"Is there anything else I can help you with today?"
-If the user says no, goodbye, thanks, or anything indicating they are done, respond with exactly:
-"Thank you for shopping with Daraz Assistant! Have a great day. 🛍️"
-and nothing else.
-
-## Your Shopping Behaviour
-- Always ask for budget in PKR if not mentioned.
-- Always ask for use-case if unclear.
-- Never invent product listings, prices, or seller names.
-- Keep responses short — 3 to 5 sentences max.
-
-## Critical Instruction — State Tracking (NEVER skip this)
-At the very end of EVERY response, append this exact tag:
-<STATE>Budget: <amount or Unknown>, Item: <product or Unknown>, Preferences: <key facts or None></STATE>
-
-Even if you refused an off-topic message, still append:
-<STATE>Budget: Unknown, Item: Unknown, Preferences: None</STATE>
-"""
+SLIDING_WINDOW_SIZE = 6
 
 # =============================================================================
 # WELCOME MESSAGE
-# Sent immediately when a session is created — before any user input.
-# Your partner displays this as the first message in the chat UI.
 # =============================================================================
 WELCOME_MESSAGE = (
-    "Hi! I'm Daraz Assistant 🛍️, your personal shopping guide for Daraz.pk. "
-    "I can help you find the best products that match your needs and budget in PKR. "
-    "What are you looking to buy today?"
+    "Hi! I'm Daraz Assistant 🛍️, your personal shopping guide for Daraz.pk — "
+    "Pakistan's largest online marketplace. I can help you find the best products "
+    "that match your needs and budget in PKR. What are you looking to buy today?"
 )
 
 # =============================================================================
-# MAX TURNS PER SESSION
-# 1 turn = 1 user message + 1 assistant response.
-# At Q4_K_M 3B on a 4096 token context window, 10 turns is safe before
-# context quality degrades. Adjust down to 8 if responses become incoherent.
+# BASE SYSTEM PROMPT
+# Clean shopping-only prompt. Refusal logic is handled by the intent
+# classifier in engine.py — NOT by rules here. This keeps the model
+# focused purely on being a great shopping assistant.
 # =============================================================================
-MAX_TURNS = 10
+BASE_SYSTEM_PROMPT = """You are Daraz Assistant, a helpful shopping guide for Daraz.pk — Pakistan's largest online marketplace.
 
-# -----------------------------------------------------------------------------
+Your job is to help users find the best products that match their needs and budget in PKR.
+
+## Behaviour
+- Be warm, concise, and helpful.
+- ALWAYS ask for budget in PKR if not mentioned.
+- ALWAYS ask for use-case if the product purpose is unclear.
+- Never invent specific product listings, prices, or seller names — recommend categories and key specs instead.
+- Keep responses under 4 sentences.
+- When the user's shopping request is fully resolved, end your response with: "Is there anything else I can help you with today?"
+
+## STATE TAG — MANDATORY ON EVERY SINGLE RESPONSE
+You MUST append this tag at the very end of every response, no exceptions:
+<STATE>Budget: <PKR amount or Unknown>, Item: <product or Unknown>, Preferences: <key facts or None>, Resolved: <yes or no></STATE>
+
+Rules:
+- Resolved yes = user's request is fully addressed AND you asked the closing question
+- Resolved no = conversation is still ongoing
+- This tag is stripped automatically and never shown to the user
+"""
+
+
+# =============================================================================
 # STATE-AWARE SYSTEM PROMPT BUILDER
-# Called by context.py right before sending messages to the LLM.
-# Injects extracted user state into the system prompt so the model never
-# forgets the user's budget or item even if it has scrolled out of the window.
-# -----------------------------------------------------------------------------
+# Injects known user facts so they survive the sliding window.
+# =============================================================================
 def build_system_prompt(extracted_state: dict) -> str:
     """
-    Dynamically builds the system prompt by appending the current
-    extracted session state to the base prompt.
+    Extends base system prompt with extracted session state.
 
     Args:
-        extracted_state (dict): Keys are 'budget', 'item', 'preferences'.
-                                Populated by context.py's state extractor.
+        extracted_state (dict): {budget, item, preferences, resolved}
 
     Returns:
-        str: The full system prompt string to inject at message index 0.
+        str: Full system prompt with known facts injected.
     """
-    # If no state has been extracted yet, return the base prompt as-is
-    if not extracted_state or all(v in (None, "Unknown", "None") for v in extracted_state.values()):
+    if not extracted_state:
         return BASE_SYSTEM_PROMPT
 
-    # Build a natural-language summary of what we know about the user so far
-    state_lines = []
+    facts = []
+    if extracted_state.get("budget") not in (None, "Unknown"):
+        facts.append(f"- Budget: {extracted_state['budget']} PKR")
+    if extracted_state.get("item") not in (None, "Unknown"):
+        facts.append(f"- Looking for: {extracted_state['item']}")
+    if extracted_state.get("preferences") not in (None, "None"):
+        facts.append(f"- Preferences: {extracted_state['preferences']}")
 
-    if extracted_state.get("budget") and extracted_state["budget"] not in ("Unknown", None):
-        state_lines.append(f"- Budget: {extracted_state['budget']} PKR")
-
-    if extracted_state.get("item") and extracted_state["item"] not in ("Unknown", None):
-        state_lines.append(f"- Looking for: {extracted_state['item']}")
-
-    if extracted_state.get("preferences") and extracted_state["preferences"] not in ("None", None):
-        state_lines.append(f"- Preferences: {extracted_state['preferences']}")
-
-    if not state_lines:
+    if not facts:
         return BASE_SYSTEM_PROMPT
 
-    # Append the known facts block to the base prompt
-    state_block = "\n## What You Already Know About This User\n" + "\n".join(state_lines)
-    state_block += "\nUse these facts to personalise every response without asking again."
-
-    return BASE_SYSTEM_PROMPT + state_block
+    injected = "\n## Already Known About This User (DO NOT ask again)\n"
+    injected += "\n".join(facts)
+    return BASE_SYSTEM_PROMPT + injected
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # CHATML PROMPT BUILDER
-# Qwen2.5-Instruct uses the ChatML format. This function assembles the full
-# token string from the sliding-window message list produced by context.py.
-# -----------------------------------------------------------------------------
+# =============================================================================
 def build_chatml_prompt(messages: list) -> str:
     """
-    Converts a list of {'role': str, 'content': str} message dicts into
-    a single ChatML-formatted string ready for llama-cpp-python inference.
-
-    The messages list must already have the system prompt injected at [0]
-    and be pre-trimmed to the sliding window by context.py.
+    Converts message list to ChatML string for llama-cpp-python.
 
     Args:
-        messages (list): Sliding-window message list from context.py.
+        messages (list): [{"role": str, "content": str}, ...]
 
     Returns:
-        str: Full ChatML prompt string.
+        str: Full ChatML prompt ending with <|im_start|>assistant\n
     """
     prompt = ""
-
     for msg in messages:
-        role    = msg["role"]     # "system" | "user" | "assistant"
-        content = msg["content"]
-        prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-
-    # Final tag tells the model it is its turn to respond
+        prompt += f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
     prompt += "<|im_start|>assistant\n"
-
     return prompt
