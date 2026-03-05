@@ -1,291 +1,161 @@
 # =============================================================================
 # memory/context.py
-# Purpose : In-memory session management, sliding window context trimming,
-#           and silent <STATE> tag extraction from LLM responses.
-# Domain  : Daraz.pk shopping assistant — CPU-optimised, no database.
+# Purpose : Session management, sliding window, STATE extraction,
+#           semantic conversation-end detection.
 # =============================================================================
 
 import re
 import logging
 from typing import Optional
-from app.core.config import build_system_prompt
-from app.core.config import MAX_TURNS, WELCOME_MESSAGE
+from app.core.config import (
+    build_system_prompt,
+    SLIDING_WINDOW_SIZE,
+    MAX_TURNS,
+    WELCOME_MESSAGE,
+)
 
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# CONSTANTS
+# REGEX PATTERNS
 # =============================================================================
 
-# Maximum number of conversation TURNS (user + assistant = 1 turn) to keep
-# in the sliding window. Keeping this at 6 messages (3 turns) prevents context
-# overflow on a 4096-token context window on a 4-core i5.
-SLIDING_WINDOW_MESSAGES = 6
-
-# Regex to extract the hidden <STATE>...</STATE> block the LLM appends.
-# re.DOTALL lets . match newlines in case the model wraps the tag.
 _STATE_PATTERN = re.compile(r"<STATE>(.*?)</STATE>", re.DOTALL | re.IGNORECASE)
-
-# Regex to parse individual key:value pairs inside the STATE block.
-_STATE_KV_PATTERN = re.compile(r"(Budget|Item|Preferences)\s*:\s*([^,<\n]+)", re.IGNORECASE)
-
+_STATE_KV_PATTERN = re.compile(
+    r"(Budget|Item|Preferences|Resolved)\s*:\s*([^,<\n]+)", re.IGNORECASE
+)
 
 # =============================================================================
 # IN-MEMORY SESSION STORE
+#
 # Structure:
-#   active_chats = {
-#       "session_id": {
-#           "history" : [{"role": "user"|"assistant", "content": str}, ...],
-#           "state"   : {"budget": str|None, "item": str|None, "preferences": str|None}
-#       }
+# active_chats = {
+#   "session_id": {
+#       "history"  : [{"role": str, "content": str}, ...],
+#       "state"    : {
+#           "budget"     : str | None,
+#           "item"       : str | None,
+#           "preferences": str | None,
+#           "resolved"   : str,        # "yes" | "no"
+#       },
+#       "turns"    : int,
+#       "status"   : str,              # "active" | "closing" | "ended"
 #   }
-# This lives purely in process memory — no disk, no database.
+# }
+#
+# MULTI-SESSION NOTE:
+# Each session_id is fully isolated. Concurrent users get separate entries.
+# This dict is process-local — suitable for single-instance deployment.
+# For multi-instance scaling, replace with Redis:
+#   import redis; r = redis.Redis(); r.hset(session_id, mapping=session_data)
 # =============================================================================
 active_chats: dict[str, dict] = {}
 
 
 # =============================================================================
-# PUBLIC API  (functions your partner's routes.py will call)
+# PUBLIC SESSION API
 # =============================================================================
 
 def get_or_create_session(session_id: str) -> dict:
     """
-    Returns the session dict for session_id, creating it if it does not exist.
-    Your partner should call this once at the start of every WebSocket connection.
+    Returns existing session or creates a fresh one.
 
     Args:
-        session_id (str): Unique identifier for the chat session (e.g. UUID).
+        session_id (str): Unique session identifier (UUID recommended).
 
     Returns:
-        dict: The session dict with keys 'history' and 'state'.
+        dict: Session dict with history, state, turns, status.
     """
     if session_id not in active_chats:
         active_chats[session_id] = {
-            "history": [],   # list of {role, content} dicts
-            "state"  : {     # extracted user constraints
+            "history": [],
+            "state": {
                 "budget"     : None,
                 "item"       : None,
                 "preferences": None,
-            }
+                "resolved"   : "no",
+            },
+            "turns" : 0,
+            "status": "active",
         }
-        logger.info(f"[context] New session created: {session_id}")
-
+        logger.info(f"[context] New session: {session_id}")
     return active_chats[session_id]
 
 
 def add_message_to_chat(session_id: str, role: str, text: str) -> None:
     """
-    Appends a single message to the session's raw history.
-    Call this AFTER stripping the <STATE> tag from assistant messages.
+    Appends a message to session history.
+    Always call with clean text — STATE tag must be stripped before calling.
 
     Args:
-        session_id (str): The session to update.
+        session_id (str): Target session.
         role       (str): "user" or "assistant".
-        text       (str): The message content (clean, no <STATE> tag).
+        text       (str): Clean message content.
     """
     session = get_or_create_session(session_id)
     session["history"].append({"role": role, "content": text})
-    logger.debug(f"[context] [{session_id}] +{role}: {text[:60]}...")
 
 
 def get_chat_history(session_id: str) -> list:
-    """
-    Returns the raw message history for a session.
-    Useful for your partner to send conversation history to the frontend.
-
-    Args:
-        session_id (str): The session to query.
-
-    Returns:
-        list: List of {"role": str, "content": str} dicts.
-    """
-    session = get_or_create_session(session_id)
-    return session["history"]
+    """Returns full raw message history for a session."""
+    return get_or_create_session(session_id)["history"]
 
 
 def get_session_state(session_id: str) -> dict:
-    """
-    Returns the currently extracted state dict for a session.
+    """Returns extracted state dict {budget, item, preferences, resolved}."""
+    return get_or_create_session(session_id)["state"]
 
-    Args:
-        session_id (str): The session to query.
 
-    Returns:
-        dict: {"budget": ..., "item": ..., "preferences": ...}
-    """
-    session = get_or_create_session(session_id)
-    return session["state"]
+def get_session_status(session_id: str) -> str:
+    """Returns 'active', 'closing', or 'ended'."""
+    return get_or_create_session(session_id)["status"]
+
+
+def set_session_status(session_id: str, status: str) -> None:
+    """Updates session lifecycle status."""
+    get_or_create_session(session_id)["status"] = status
+
+
+def increment_turn(session_id: str) -> None:
+    """Increments completed turn counter after each exchange."""
+    get_or_create_session(session_id)["turns"] += 1
+
+
+def is_session_maxed(session_id: str) -> bool:
+    """Returns True if session has hit MAX_TURNS limit."""
+    return get_or_create_session(session_id)["turns"] >= MAX_TURNS
 
 
 def reset_session(session_id: str) -> None:
     """
-    Wipes history and state for a session (used by the 'New Chat' button).
-    Your partner will call this from the /reset endpoint.
-
-    Args:
-        session_id (str): The session to clear.
+    Wipes history and state for a session.
+    Called by /reset endpoint (New Chat button).
     """
     active_chats[session_id] = {
         "history": [],
-        "state"  : {"budget": None, "item": None, "preferences": None}
+        "state": {
+            "budget"     : None,
+            "item"       : None,
+            "preferences": None,
+            "resolved"   : "no",
+        },
+        "turns" : 0,
+        "status": "active",
     }
     logger.info(f"[context] Session reset: {session_id}")
 
 
 def list_active_sessions() -> list:
-    """Returns all currently active session IDs. Useful for debugging."""
+    """Returns all active session IDs. Used by debug endpoint."""
     return list(active_chats.keys())
-
-
-# =============================================================================
-# INTERNAL LOGIC  (used by engine.py, not directly by routes.py)
-# =============================================================================
-
-def extract_and_strip_state(session_id: str, raw_response: str) -> str:
-    """
-    Intercepts the raw LLM output before it reaches the user.
-
-    1. Finds the hidden <STATE>...</STATE> block the LLM appended.
-    2. Parses Budget / Item / Preferences from it.
-    3. Updates the session state dict with any newly extracted values.
-    4. Strips the <STATE> tag from the text so the user never sees it.
-
-    Args:
-        session_id   (str): The active session.
-        raw_response (str): The raw text returned by llama-cpp-python.
-
-    Returns:
-        str: Clean response text with <STATE> block removed.
-    """
-    session = get_or_create_session(session_id)
-    match   = _STATE_PATTERN.search(raw_response)
-
-    if match:
-        state_block = match.group(1)  # text inside <STATE>...</STATE>
-        _update_state_from_block(session["state"], state_block)
-        logger.debug(f"[context] [{session_id}] State updated: {session['state']}")
-
-    # Remove the entire <STATE>...</STATE> tag (including surrounding whitespace)
-    clean_response = _STATE_PATTERN.sub("", raw_response).strip()
-    return clean_response
-
-
-def build_inference_payload(session_id: str, new_user_message: str) -> list:
-    """
-    Assembles the sliding-window message list to send to the LLM.
-
-    Steps:
-    1. Injects the state-aware system prompt at index 0.
-    2. Takes the last SLIDING_WINDOW_MESSAGES messages from history.
-    3. Appends the new user message at the end.
-
-    This is the ONLY function engine.py needs to call before inference.
-
-    Args:
-        session_id       (str): The active session.
-        new_user_message (str): The latest message typed by the user.
-
-    Returns:
-        list: Ready-to-use message list for build_chatml_prompt() in config.py.
-    """
-    session = get_or_create_session(session_id)
-
-    # --- 1. Build state-injected system prompt ---
-    system_prompt = build_system_prompt(session["state"])
-    system_message = {"role": "system", "content": system_prompt}
-
-    # --- 2. Apply sliding window to history ---
-    # We trim BEFORE adding the new user message so the window is always
-    # the last N *stored* messages + the incoming one.
-    trimmed_history = session["history"][-SLIDING_WINDOW_MESSAGES:]
-
-    # --- 3. Append current user message ---
-    current_user_msg = {"role": "user", "content": new_user_message}
-
-    # --- 4. Assemble final payload ---
-    payload = [system_message] + trimmed_history + [current_user_msg]
-
-    logger.debug(
-        f"[context] [{session_id}] Inference payload: "
-        f"1 system + {len(trimmed_history)} history + 1 user = {len(payload)} messages"
-    )
-    return payload
-
-
-# =============================================================================
-# PRIVATE HELPERS
-# =============================================================================
-
-def _update_state_from_block(state: dict, state_block: str) -> None:
-    """
-    Parses key:value pairs from inside a <STATE> block and updates
-    the session state dict in-place. Only overwrites a field if the
-    newly extracted value is meaningful (not 'Unknown' or 'None').
-
-    Args:
-        state       (dict): The session's existing state dict (mutated).
-        state_block (str) : Raw text content inside <STATE>...</STATE>.
-    """
-    for kv_match in _STATE_KV_PATTERN.finditer(state_block):
-        key   = kv_match.group(1).strip().lower()        # budget / item / preferences
-        value = kv_match.group(2).strip()
-
-        # Skip placeholder values the LLM writes when it doesn't know yet
-        if value.lower() in ("unknown", "none", "n/a", ""):
-            continue
-
-        state[key] = value
-
-
-
-# Add 'turns' and 'status' to session structure in get_or_create_session()
-def get_or_create_session(session_id: str) -> dict:
-    if session_id not in active_chats:
-        active_chats[session_id] = {
-            "history" : [],
-            "state"   : {
-                "budget"     : None,
-                "item"       : None,
-                "preferences": None,
-            },
-            "turns"  : 0,       # counts completed user+assistant exchanges
-            "status" : "active" # "active" | "closing" | "ended"
-        }
-        logger.info(f"[context] New session created: {session_id}")
-    return active_chats[session_id]
-
-
-def increment_turn(session_id: str) -> None:
-    """Call this after every completed exchange in engine.py."""
-    session = get_or_create_session(session_id)
-    session["turns"] += 1
-
-
-def is_session_maxed(session_id: str) -> bool:
-    """Returns True if the session has hit the turn limit."""
-    session = get_or_create_session(session_id)
-    return session["turns"] >= MAX_TURNS
-
-
-def get_session_status(session_id: str) -> str:
-    """Returns 'active', 'closing', or 'ended'."""
-    session = get_or_create_session(session_id)
-    return session["status"]
-
-
-def set_session_status(session_id: str, status: str) -> None:
-    """Updates session status. Called by engine.py after detecting closing phrases."""
-    session = get_or_create_session(session_id)
-    session["status"] = status
 
 
 def get_welcome_message(session_id: str) -> dict:
     """
-    Returns the welcome message payload.
-    Your partner calls this via GET /session/welcome/{session_id}
-    when the WebSocket connection is first established.
+    Returns welcome message payload for new sessions.
+    Called by GET /session/welcome/{session_id} when chat opens.
     """
-    get_or_create_session(session_id)  # ensure session exists
+    get_or_create_session(session_id)
     return {
         "session_id" : session_id,
         "response"   : WELCOME_MESSAGE,
@@ -296,14 +166,93 @@ def get_welcome_message(session_id: str) -> dict:
     }
 
 
-# Closing/goodbye phrases to detect in user messages
-_CLOSING_PHRASES = [
-    "no", "nope", "nothing", "that's all", "thats all",
-    "i'm done", "im done", "no thanks", "no thank you",
-    "goodbye", "bye", "thanks", "thank you", "ok bye",
-]
+# =============================================================================
+# CONTEXT WINDOW BUILDER
+# Signal filtering: only last SLIDING_WINDOW_SIZE messages are kept.
+# Critical facts (budget, item) are preserved via STATE injection into
+# the system prompt — they never fall out of context.
+# =============================================================================
 
-def is_closing_message(message: str) -> bool:
-    """Detects if the user is ending the conversation."""
-    lowered = message.lower().strip()
-    return any(phrase in lowered for phrase in _CLOSING_PHRASES)
+def build_inference_payload(session_id: str, new_user_message: str) -> list:
+    """
+    Assembles optimised prompt payload for llama-cpp-python.
+
+    Args:
+        session_id       (str): Active session ID.
+        new_user_message (str): Latest user input.
+
+    Returns:
+        list: Ready-to-format message list for build_chatml_prompt().
+    """
+    session = get_or_create_session(session_id)
+
+    system_msg = {
+        "role"   : "system",
+        "content": build_system_prompt(session["state"]),
+    }
+
+    # Sliding window — drop old noise, keep recent signal
+    trimmed = session["history"][-SLIDING_WINDOW_SIZE:]
+
+    payload = [system_msg] + trimmed + [{"role": "user", "content": new_user_message}]
+
+    logger.debug(
+        f"[context] [{session_id}] Payload: "
+        f"1 system + {len(trimmed)} history + 1 user = {len(payload)} messages"
+    )
+    return payload
+
+
+# =============================================================================
+# STATE EXTRACTION
+# =============================================================================
+
+def extract_and_strip_state(session_id: str, raw_response: str) -> str:
+    session = get_or_create_session(session_id)
+
+    # TEMPORARY DEBUG — remove after fixing
+    logger.info(f"[context] RAW RESPONSE: {repr(raw_response)}")
+
+    match = _STATE_PATTERN.search(raw_response)
+    if match:
+        _update_state_from_block(session["state"], match.group(1))
+        logger.debug(f"[context] [{session_id}] State: {session['state']}")
+    else:
+        logger.warning(f"[context] [{session_id}] NO STATE TAG FOUND in response")
+
+    clean = _STATE_PATTERN.sub("", raw_response).strip()
+    clean = re.sub(r"Resolved\s*:\s*(yes|no)", "", clean, flags=re.IGNORECASE).strip()
+    return clean
+
+    
+def is_conversation_resolved(session_id: str) -> bool:
+    """
+    Semantic end-of-conversation detection via STATE tag.
+    Model sets Resolved: yes only when request is fully satisfied AND
+    it has asked the closing question. "no" answers to mid-conversation
+    questions will NOT trigger this — the model controls it via context.
+
+    Returns:
+        bool: True only if model flagged Resolved: yes.
+    """
+    state = get_or_create_session(session_id)["state"]
+    return state.get("resolved", "no").lower().strip() == "yes"
+
+
+# =============================================================================
+# PRIVATE HELPERS
+# =============================================================================
+
+def _update_state_from_block(state: dict, state_block: str) -> None:
+    """
+    Parses key:value pairs from STATE block and updates session state.
+    Skips placeholder values (Unknown, None, N/A).
+    """
+    for match in _STATE_KV_PATTERN.finditer(state_block):
+        key   = match.group(1).strip().lower()
+        value = match.group(2).strip()
+
+        if value.lower() in ("unknown", "none", "n/a", ""):
+            continue
+
+        state[key] = value
