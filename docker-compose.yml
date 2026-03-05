@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   backend:
     build:
@@ -8,16 +6,16 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/app/app        # live code — backend/app/ → /app/app
-      - ./models:/app/models          # models/ → /app/models inside container
+      - ./backend/app:/app/app
+      - ./models:/app/models
     environment:
       - MODEL_PATH=/app/models/qwen2.5-3b-instruct-q4_k_m.gguf
     restart: unless-stopped
 
   frontend:
-    image: nginx:alpine
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "3000:80"
-    volumes:
-      - ./frontend:/usr/share/nginx/html
     restart: unless-stopped
