@@ -10,11 +10,12 @@ function extractProducts(content) {
 
 export default function MessageBubble({ message, isLast }) {
     const isUser = message.role === 'user';
+    const isStreaming = !!message.streaming;
     const products = !isUser ? extractProducts(message.content) : [];
 
     return (
         <motion.div
-            initial={{ opacity: 0, y: 12 }}
+            initial={isStreaming ? false : { opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
             className={`flex gap-2 px-4 ${isUser ? 'justify-end' : 'justify-start'}`}
@@ -38,6 +39,12 @@ export default function MessageBubble({ message, isLast }) {
           `}
                 >
                     {message.content}
+                    {isStreaming && (
+                        <span className="inline-block w-1.5 h-4 ml-0.5 bg-[#F57224] rounded-sm animate-pulse align-middle" />
+                    )}
+                    {message.cancelled && (
+                        <span className="block mt-1 text-xs text-orange-400 italic">Generation stopped</span>
+                    )}
                 </div>
 
                 {/* Product cards (if detected) */}

@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 # REGEX PATTERNS
 # =============================================================================
 
+# Forgiving regex: Captures the state even if the LLM gets cut off at the end
 _STATE_PATTERN = re.compile(r"<STATE>\s*(.*?)(?:</STATE>|$)", re.DOTALL | re.IGNORECASE)
 _STATE_KV_PATTERN = re.compile(
-    r"(Budget|Item|Preferences|Resolved)\s*:\s*([^,<\n]+)", re.IGNORECASE
+    r"(Budget|Item|Preferences|Resolved)\s*:\s*([^,<]+)", re.IGNORECASE
 )
-
 # =============================================================================
 # IN-MEMORY SESSION STORE
 #
@@ -152,21 +152,11 @@ def reset_session(session_id: str) -> None:
     Called by /reset endpoint (New Chat button).
     Old session is preserved in DB; new session gets a fresh ID.
     """
-    # Persist final state of old session before resetting in memory
+    # Persist final state of old session before removing from memory
     if session_id in active_chats:
         _persist(session_id)
+        del active_chats[session_id]
 
-    active_chats[session_id] = {
-        "history": [],
-        "state": {
-            "budget"     : None,
-            "item"       : None,
-            "preferences": None,
-            "resolved"   : "no",
-        },
-        "turns" : 0,
-        "status": "active",
-    }
     logger.info(f"[context] Session reset: {session_id}")
 
 
@@ -245,6 +235,7 @@ def extract_and_strip_state(session_id: str, raw_response: str) -> str:
     else:
         logger.warning(f"[context] [{session_id}] NO STATE TAG FOUND in response")
 
+    clean = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
     clean = _STATE_PATTERN.sub("", raw_response).strip()
     clean = re.sub(r"Resolved\s*:\s*(yes|no)", "", clean, flags=re.IGNORECASE).strip()
     return clean

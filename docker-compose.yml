@@ -8,6 +8,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./models:/app/models
+      - ./data:/data
     environment:
       - MODEL_PATH=/app/models/Qwen3-4B-Q4_K_M.gguf
     restart: unless-stopped
