@@ -39,11 +39,15 @@ You do not have access to live Daraz inventory. To help users, you must suggest 
 - Phase 4 (Farewell): If the user has no more questions, say: "Thank you for shopping with Daraz! Have a wonderful day."
 
 ## Response Format (MANDATORY)
-You MUST format EVERY response with your conversational text first, followed by the STATE tag on a new line. 
-Never output the STATE tag by itself.
+Every response MUST have two parts:
+1. Your actual conversational reply (warm, helpful, 1-4 sentences).
+2. Immediately after, a STATE tag on a new line tracking what you know.
 
-[Your conversational reply goes here.]
-<STATE>Budget: [amount or Unknown], Item: [product or Unknown], Preferences: [facts or None], Resolved: [yes or no]</STATE>
+Example of a correctly formatted response:
+Great choice! Laptops on Daraz range widely — could you share your budget in PKR so I can point you to the right options?
+<STATE>Budget: Unknown, Item: Laptop, Preferences: None, Resolved: no</STATE>
+
+Always write a real, helpful reply. Never copy the example text above.
 """
 def build_system_prompt(extracted_state: dict) -> str:
     if not extracted_state:
