@@ -372,3 +372,55 @@ async def debug_sessions():
         "count"      : len(sessions),
         "session_ids": sessions,
     }
+
+
+# =============================================================================
+# ASSIGNMENT DELIVERABLE GENERATORS
+# =============================================================================
+
+@router.get("/postman", tags=["Documentation"])
+async def export_postman_collection():
+    """
+    Auto-generates the Postman Collection JSON for the assignment submission.
+    Visit http://localhost:8000/postman, save the output as a .json file,
+    and drop it in your GitHub repo!
+    """
+    return {
+        "info": {
+            "name": "Daraz Assistant API",
+            "description": "Postman collection for NLP Assignment Phase IV & V. Evaluates REST fallback, session management, and benchmarking.",
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [
+            {
+                "name": "1. Health Check",
+                "request": {"method": "GET", "url": {"raw": "http://localhost:8000/health", "host": ["http://localhost:8000"], "path": ["health"]}}
+            },
+            {
+                "name": "2. Chat (REST)",
+                "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "url": {"raw": "http://localhost:8000/chat", "host": ["http://localhost:8000"], "path": ["chat"]},
+                    "body": {"mode": "raw", "raw": "{\n  \"message\": \"I need a laptop under 50000 PKR\"\n}"}
+                }
+            },
+            {
+                "name": "3. Get All Sessions",
+                "request": {"method": "GET", "url": {"raw": "http://localhost:8000/sessions", "host": ["http://localhost:8000"], "path": ["sessions"]}}
+            },
+            {
+                "name": "4. Reset Session",
+                "request": {
+                    "method": "POST",
+                    "header": [{"key": "Content-Type", "value": "application/json"}],
+                    "url": {"raw": "http://localhost:8000/reset", "host": ["http://localhost:8000"], "path": ["reset"]},
+                    "body": {"mode": "raw", "raw": "{\n  \"session_id\": \"test-session-123\"\n}"}
+                }
+            },
+            {
+                "name": "5. Run Benchmark",
+                "request": {"method": "POST", "url": {"raw": "http://localhost:8000/benchmark?runs=3", "host": ["http://localhost:8000"], "path": ["benchmark"], "query": [{"key": "runs", "value": "3"}]}}
+            }
+        ]
+    }

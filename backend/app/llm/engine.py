@@ -114,7 +114,33 @@ class LLMEngine:
             "latency_ms": round(latency_ms, 2), "session_id": session_id,
             "status": session["status"], "turns_used": session["turns"], "turns_max": MAX_TURNS,
         }
+    async def generate(self, session_id: str, user_message: str) -> dict:
+        """
+        Non-streaming wrapper for the stream method. 
+        Collects all tokens and returns a standard ChatResponse dict.
+        """
+        full_response = ""
+        latency_ms = 0
+        status = "active"
+        turns_used = 0
 
+        async for chunk in self.stream(session_id, user_message):
+            if not chunk.get("done"):
+                full_response += chunk.get("token", "")
+            else:
+                latency_ms = chunk.get("latency_ms", 0)
+                status = chunk.get("status", "active")
+                turns_used = chunk.get("turns_used", 0)
+
+        return {
+            "response": full_response,
+            "latency_ms": latency_ms,
+            "session_id": session_id,
+            "status": status,
+            "turns_used": turns_used,
+            "turns_max": MAX_TURNS
+        }
+        
     def _persist_turn(self, session_id: str, user_msg: str, assistant_msg: str) -> None:
         add_message_to_chat(session_id, "user", user_msg)
         add_message_to_chat(session_id, "assistant", assistant_msg)

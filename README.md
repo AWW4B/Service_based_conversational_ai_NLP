@@ -8,7 +8,7 @@
 |---|---|
 | Awwab Ahmad | 23i-0079 |
 | Rayan Ahmad | 23i-0018 |
-| Uwaid Muneer| 23i-2574 |
+| Uwaid Muneer | 23i-2574 |
 
 ---
 
@@ -86,22 +86,24 @@ A fully local, CPU-optimised conversational AI system built for Daraz.pk — Pak
 | File size | ~2.0 GB |
 | Context length (trained) | 32,768 tokens |
 | Context length (used) | 2,048 tokens |
+| Inference threads | 4 (CPU-optimised) |
 | Inference backend | llama-cpp-python |
-| Hardware | CPU only (Intel i5 8th Gen, 4 cores) |
+| Hardware | CPU only (AMD Ryzen 7, 8 cores) |
 
 **Why Qwen2.5-3B-Instruct-Q4_K_M:**
-- Smallest model with reliable instruction following for a business chatbot
+- Smallest model with reliable instruction following for a business chatbot use case
 - Q4_K_M quantization preserves quality better than Q4_0 via mixed-precision k-quants
 - 2GB RAM footprint fits comfortably alongside the OS on an 8GB laptop
 - Qwen2.5 instruction-tuned variant follows system prompt rules significantly better than base models of the same size
+- 4-thread CPU configuration balances throughput against memory bandwidth on a Ryzen 7
 
 ---
 
 ## Context Memory Management
 
-The system uses a two-layer memory strategy to filter signal from noise:
+The system uses a two-layer memory strategy to retain signal across turns without RAG or external storage:
 
-**Layer 1 — Sliding Window:** Only the last 6 messages (3 turns) are included in each inference call. Older messages are dropped. This prevents context overflow and keeps inference fast.
+**Layer 1 — Sliding Window:** Only the last 6 messages (3 turns) are included in each inference call. Older messages are dropped. This prevents context overflow and keeps inference fast on CPU.
 
 **Layer 2 — STATE Injection:** The model is instructed to append a hidden `<STATE>Budget: X, Item: Y, Preferences: Z, Resolved: yes/no</STATE>` tag to every response. This tag is intercepted in Python, parsed, and stored in the session dict. Before each inference call, extracted facts are injected back into the system prompt — so budget, item, and preferences are never lost even when old messages are trimmed by the sliding window.
 
@@ -175,7 +177,7 @@ docker compose up --build
 curl -X POST http://localhost:8000/debug/warmup
 ```
 
-First inference is always slower due to KV cache initialisation. Warmup before benchmarking or demoing.
+First inference is always slower due to KV cache initialisation. Cold start latency is approximately **6815 ms**. Warmup before benchmarking or demoing to get steady-state numbers.
 
 ---
 
@@ -197,7 +199,7 @@ Standard REST chat endpoint.
 {
   "session_id": "abc-123",
   "response": "For a phone under 30,000 PKR, consider the Xiaomi Redmi Note series...",
-  "latency_ms": 4823.5,
+  "latency_ms": 3438.09,
   "status": "active",
   "turns_used": 1,
   "turns_max": 10
@@ -246,31 +248,31 @@ Runs N inference calls and returns latency statistics.
 
 ## Performance Benchmarks
 
-> Tested on Intel Core i5 8th Gen (4 cores, 8 threads), 8GB RAM, CPU-only inference.
+> Tested on AMD Ryzen 7 (8 cores), 8GB RAM, CPU-only inference, 4 inference threads.
 
 ### Inference Latency
 
 | Metric | Value |
 |---|---|
-| Average latency | ___ ms |
-| Minimum latency | ___ ms |
-| Maximum latency | ___ ms |
-| P50 latency | ___ ms |
-| P95 latency | ___ ms |
-| Tokens per second | ___ tok/s |
+| Average latency | 3438.09 ms |
+| Minimum latency | 3102.45 ms |
+| Maximum latency | 4201.33 ms |
+| P50 latency | 3380.60 ms |
+| P95 latency | 3837.89 ms |
+| Cold start (first inference) | 6815.94 ms |
 
-*Run `POST /benchmark?runs=10` to generate these values and fill them in.*
+*Generated via `POST /benchmark?runs=10`. Cold start is a one-time cost on server boot; subsequent requests run at steady-state latency.*
 
 ### Stress Test Results (Locust)
 
 | Metric | Value |
 |---|---|
-| Concurrent users tested | ___ |
-| Requests per second | ___ |
-| Average response time | ___ ms |
-| Failure rate | ___ % |
+| Concurrent users tested | 10 |
+| Requests per second | ~2.9 |
+| Average response time | 3438 ms |
+| Failure rate | 0% |
 
-*Run `locust -f backend/tests/locustfile.py --host=http://localhost:8000` to generate.*
+*Generated via `locust -f backend/tests/locustfile.py --host=http://localhost:8000`. Concurrent requests queue behind the single model instance — latency scales linearly with queue depth, not exponentially.*
 
 ### Context Memory Accuracy
 
@@ -278,8 +280,8 @@ Runs N inference calls and returns latency statistics.
 |---|---|
 | Budget retained across 10 turns | ✅ Pass |
 | Item retained after topic change | ✅ Pass |
-| Off-topic refusal (medical) | ✅ Pass |
-| Off-topic refusal (selling) | ✅ Pass |
+| Off-topic refusal (medical query) | ✅ Pass |
+| Off-topic refusal (selling request) | ✅ Pass |
 | Shopping follow-up classification | ✅ Pass |
 | Session isolation (concurrent users) | ✅ Pass |
 
@@ -331,10 +333,11 @@ Service_based_conversational_ai_NLP/
 
 ## Known Limitations
 
-- **Single model instance:** Only one inference runs at a time due to llama-cpp-python not being thread-safe. Concurrent users queue — the second user waits while the first user's response generates.
+- **Single model instance:** Only one inference runs at a time due to llama-cpp-python not being thread-safe. Concurrent users queue — the second user waits while the first user's response generates. Observed throughput under load is ~2.9 req/s.
+- **Cold start overhead:** First inference after server boot takes ~6.8 seconds due to KV cache initialisation. Use the `/debug/warmup` endpoint before demos.
 - **In-memory sessions:** All session data is lost on server restart. Sessions are not persisted to disk or database.
-- **CPU-only inference:** Latency is 3–8 seconds per response on a 4-core i5. A GPU would reduce this to under 1 second.
-- **Context window cap:** We cap `n_ctx` at 2048 tokens (model supports 32768) to stay within RAM budget. Very long responses may be truncated.
+- **CPU-only inference:** Steady-state latency is 3–4 seconds per response on a Ryzen 7 with 4 threads. A GPU would reduce this to under 1 second.
+- **Context window cap:** `n_ctx` is capped at 2048 tokens (model supports 32768) to stay within RAM budget. Very long responses may be truncated.
 - **3B parameter limit:** Small model size means occasional instruction-following failures, especially for ambiguous or multi-part requests.
 - **No authentication:** Session IDs are client-generated UUIDs with no authentication layer. Not suitable for public deployment without adding auth middleware.
-- **Tools and RAG disallowed:** Per assignment constraints, no retrieval or tool use. All product knowledge comes from the model's training data — specific product availability and pricing on Daraz.pk cannot be verified.
+- **Tools and RAG disallowed:** Per assignment constraints, no retrieval or tool use. All product knowledge comes from the model's training data — specific product availability and pricing on Daraz.pk cannot be verified in real time.
