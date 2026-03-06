@@ -152,21 +152,11 @@ def reset_session(session_id: str) -> None:
     Called by /reset endpoint (New Chat button).
     Old session is preserved in DB; new session gets a fresh ID.
     """
-    # Persist final state of old session before resetting in memory
+    # Persist final state of old session before removing from memory
     if session_id in active_chats:
         _persist(session_id)
+        del active_chats[session_id]
 
-    active_chats[session_id] = {
-        "history": [],
-        "state": {
-            "budget"     : None,
-            "item"       : None,
-            "preferences": None,
-            "resolved"   : "no",
-        },
-        "turns" : 0,
-        "status": "active",
-    }
     logger.info(f"[context] Session reset: {session_id}")
 
 

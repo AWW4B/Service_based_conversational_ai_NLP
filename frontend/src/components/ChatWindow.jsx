@@ -54,9 +54,9 @@ export default function ChatWindow({ chat, onMinimize, onClose }) {
                     <QuickActions onSelect={send} disabled={isLoading} />
                 )}
 
-                {/* Typing indicator */}
+                {/* Typing indicator — hide once streaming tokens start arriving */}
                 <AnimatePresence>
-                    {isLoading && <TypingIndicator />}
+                    {isLoading && !messages.some(m => m.streaming) && <TypingIndicator />}
                 </AnimatePresence>
             </div>
 
