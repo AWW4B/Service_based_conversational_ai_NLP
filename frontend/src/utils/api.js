@@ -1,4 +1,5 @@
-const API_BASE = '';  // Vite proxy handles routing to :8000
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const WS_BASE = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000';
 
 export async function sendMessage(sessionId, message) {
     const res = await fetch(`${API_BASE}/chat`, {

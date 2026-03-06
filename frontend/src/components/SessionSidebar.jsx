@@ -132,6 +132,10 @@ export default function SessionSidebar({ currentSessionId, onLoadSession, onNewC
                                                             </span>
                                                             <span className="text-[10px] text-gray-300">•</span>
                                                             <span className="text-[10px] text-gray-400">
+                                                                {session.turns ?? 0}/{10} turns
+                                                            </span>
+                                                            <span className="text-[10px] text-gray-300">•</span>
+                                                            <span className="text-[10px] text-gray-400">
                                                                 {session.message_count} msgs
                                                             </span>
                                                             {session.status === 'ended' && (
