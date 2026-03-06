@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # REGEX PATTERNS
 # =============================================================================
 
-_STATE_PATTERN = re.compile(r"<STATE>(.*?)</STATE>", re.DOTALL | re.IGNORECASE)
+_STATE_PATTERN = re.compile(r"<STATE>\s*(.*?)(?:</STATE>|$)", re.DOTALL | re.IGNORECASE)
 _STATE_KV_PATTERN = re.compile(
     r"(Budget|Item|Preferences|Resolved)\s*:\s*([^,<\n]+)", re.IGNORECASE
 )

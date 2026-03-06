@@ -2,11 +2,8 @@
 # core/config.py
 # =============================================================================
 
-# =============================================================================
-# INFERENCE CONSTANTS
-# =============================================================================
-MAX_TURNS      = 10
-MAX_TOKENS     = 256
+MAX_TURNS      = 15
+MAX_TOKENS     = 512  # Gives model plenty of room to write the memory tag
 N_CTX          = 2048
 N_THREADS      = 4
 N_BATCH        = 1024
@@ -14,60 +11,34 @@ TEMPERATURE    = 0.7
 TOP_P          = 0.9
 REPEAT_PENALTY = 1.1
 
-SLIDING_WINDOW_SIZE = 6
+SLIDING_WINDOW_SIZE = 10  # Remembers the last 5 full exchanges
 
-# =============================================================================
-# WELCOME MESSAGE
-# =============================================================================
 WELCOME_MESSAGE = (
-    "Hi! I'm Daraz Assistant 🛍️, your personal shopping guide for Daraz.pk — "
-    "Pakistan's largest online marketplace. I can help you find the best products "
+    "Hi! I'm Daraz Assistant 🛍️. I can help you find the best products "
     "that match your needs and budget in PKR. What are you looking to buy today?"
 )
 
 # =============================================================================
-# BASE SYSTEM PROMPT
-# Clean shopping-only prompt. Refusal logic is handled by the intent
-# classifier in engine.py — NOT by rules here. This keeps the model
-# focused purely on being a great shopping assistant.
+# BASE SYSTEM PROMPT (Self-Guarding)
 # =============================================================================
-BASE_SYSTEM_PROMPT = """You are Daraz Assistant, a helpful shopping guide for Daraz.pk — Pakistan's largest online marketplace.
+BASE_SYSTEM_PROMPT = """You are Daraz Assistant, a helpful shopping guide for Daraz.pk.
+Your job is to help users find the best products matching their needs and budget in PKR.
 
-Your job is to help users find the best products that match their needs and budget in PKR.
+## Domain Restriction (CRITICAL)
+- You MUST ONLY discuss shopping, products, Daraz, and related preferences (colors, sizes, prices).
+- If the user asks about politics, coding, medical advice, or anything completely unrelated to shopping, YOU MUST politely refuse and steer them back to shopping. (e.g., "I am a shopping assistant and can only help with Daraz products. What would you like to buy?")
+- Short answers like "black", "yes", or "under 5000" are valid shopping responses.
 
 ## Behaviour
-- Be warm, concise, and helpful.
+- Be warm and concise. Keep responses under 4 sentences.
 - ALWAYS ask for budget in PKR if not mentioned.
-- ALWAYS ask for use-case if the product purpose is unclear.
-- Never invent specific product listings, prices, or seller names — recommend categories and key specs instead.
-- Keep responses under 4 sentences.
-- When the user's shopping request is fully resolved, end your response with: "Is there anything else I can help you with today?"
 
 ## STATE TAG — MANDATORY ON EVERY SINGLE RESPONSE
-You MUST append this tag at the very end of every response, no exceptions:
+You MUST append this exact tag at the very end of your response, no exceptions:
 <STATE>Budget: <PKR amount or Unknown>, Item: <product or Unknown>, Preferences: <key facts or None>, Resolved: <yes or no></STATE>
-
-Rules:
-- Resolved yes = user's request is fully addressed AND you asked the closing question
-- Resolved no = conversation is still ongoing
-- This tag is stripped automatically and never shown to the user
 """
 
-
-# =============================================================================
-# STATE-AWARE SYSTEM PROMPT BUILDER
-# Injects known user facts so they survive the sliding window.
-# =============================================================================
 def build_system_prompt(extracted_state: dict) -> str:
-    """
-    Extends base system prompt with extracted session state.
-
-    Args:
-        extracted_state (dict): {budget, item, preferences, resolved}
-
-    Returns:
-        str: Full system prompt with known facts injected.
-    """
     if not extracted_state:
         return BASE_SYSTEM_PROMPT
 
@@ -86,20 +57,7 @@ def build_system_prompt(extracted_state: dict) -> str:
     injected += "\n".join(facts)
     return BASE_SYSTEM_PROMPT + injected
 
-
-# =============================================================================
-# CHATML PROMPT BUILDER
-# =============================================================================
 def build_chatml_prompt(messages: list) -> str:
-    """
-    Converts message list to ChatML string for llama-cpp-python.
-
-    Args:
-        messages (list): [{"role": str, "content": str}, ...]
-
-    Returns:
-        str: Full ChatML prompt ending with <|im_start|>assistant\n
-    """
     prompt = ""
     for msg in messages:
         prompt += f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
