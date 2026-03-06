@@ -32,7 +32,7 @@ class LLMEngine:
     def _load_model(self) -> None:
         model_path = os.getenv(
             "MODEL_PATH",
-            os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "Qwen3-4B-Q4_K_M.gguf")
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "qwen2.5-3b-instruct-q4_k_m.gguf")
         )
         model_path = os.path.abspath(model_path)
         logger.info(f"[engine] Loading model: {model_path}")

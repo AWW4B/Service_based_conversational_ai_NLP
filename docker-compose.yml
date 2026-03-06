@@ -10,7 +10,7 @@ services:
       - ./models:/app/models
       - ./data:/data
     environment:
-      - MODEL_PATH=/app/models/Qwen3-4B-Q4_K_M.gguf
+      - MODEL_PATH=/app/models/qwen2.5-3b-instruct-q4_k_m.gguf
     restart: unless-stopped
 
   frontend:
