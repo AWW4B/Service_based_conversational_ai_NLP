@@ -18,6 +18,91 @@ A fully local, CPU-optimised conversational AI system built for Daraz.pk — Pak
 
 ---
 
+## Business Use-Case: Daraz Shopping Assistant
+
+The chatbot acts as a shopping guide for **Daraz.pk**, Pakistan's largest e-commerce platform. It helps users find products within their budget, narrows down preferences through conversation, and suggests relevant categories and brands. The assistant strictly refuses off-topic requests (medical, legal, selling, etc.).
+
+### Conversation Flow
+
+```
+Phase 1 (Gathering)  →  Ask for item + budget + preferences
+Phase 2 (Recommending)  →  Suggest 2-3 categories/brands on Daraz
+Phase 3 (Closing)  →  "Is there anything else I can help you find?"
+Phase 4 (Farewell)  →  "Thank you for shopping with Daraz!"
+```
+
+### Example Dialogues
+
+**Dialogue 1 — Full shopping flow (budget phone)**
+
+```
+Assistant: Hi! I'm Daraz Assistant 🛍️. I can help you find the best products
+           that match your needs and budget in PKR. What are you looking to buy today?
+
+User:      I want to buy a phone
+
+Assistant: Great choice! Could you share your budget in PKR so I can point you
+           to the right options?
+
+User:      under 30000
+
+Assistant: For a smartphone under 30,000 PKR, I'd recommend checking these on Daraz:
+           1. Xiaomi Redmi Note series — great value, solid cameras
+           2. Samsung Galaxy A series — reliable with good display
+           3. Realme number series — strong battery and performance
+           Search "smartphones under 30000" on Daraz for the latest listings.
+           Is there anything else I can help you find?
+
+User:      no thanks
+
+Assistant: Thank you for shopping with Daraz! Have a wonderful day 🛍️
+```
+
+**Dialogue 2 — Off-topic refusal + redirect**
+
+```
+User:      I have a headache, what medicine should I take?
+
+Assistant: Please seek immediate medical attention. I cannot provide medical advice.
+           However, I'm here to help with shopping on Daraz! Is there a product
+           you're looking for?
+
+User:      ok find me earbuds under 3000
+
+Assistant: For earbuds under 3,000 PKR, check out these categories on Daraz:
+           1. QCY brand — popular budget wireless earbuds
+           2. Audionic — local brand with good reviews
+           Search "wireless earbuds under 3000" on Daraz for current options.
+           Would you like to narrow down by any features like noise cancellation?
+```
+
+**Dialogue 3 — Context memory across turns**
+
+```
+User:      I need a laptop
+
+Assistant: I'd love to help! What's your budget in PKR?
+
+User:      80000
+
+Assistant: For a laptop around 80,000 PKR, you have some solid options on Daraz.
+           Do you have a preference for brand or use case — like gaming, office
+           work, or programming?
+
+User:      programming
+
+[STATE remembers: Budget=80000, Item=Laptop, Preferences=programming]
+
+Assistant: For programming under 80,000 PKR, I'd suggest:
+           1. Lenovo IdeaPad series — good keyboards and Linux support
+           2. HP Pavilion — reliable with decent RAM configurations
+           3. Acer Aspire — budget-friendly with upgradeable RAM
+           Look for at least 8GB RAM and an SSD. Search "laptops for programming"
+           on Daraz. Is there anything else I can help you find?
+```
+
+---
+
 ## Architecture
 
 ```
@@ -451,6 +536,59 @@ Triggers a dummy inference call to initialise the KV cache. Call once after serv
 | Off-topic refusal (selling request) | ✅ Pass |
 | Session isolation (concurrent users) | ✅ Pass |
 | Session restored from SQLite after restart | ✅ Pass |
+
+#### Test Transcript — Budget Retention Across Turns
+
+```
+[Turn 1]
+User: I need earbuds
+Assistant: I'd love to help! What's your budget in PKR?
+→ STATE: {budget: null, item: Earbuds, preferences: null, resolved: no}
+
+[Turn 2]
+User: 3000
+Assistant: For earbuds under 3,000 PKR, check out QCY or Audionic on Daraz...
+→ STATE: {budget: 3000, item: Earbuds, preferences: null, resolved: no}
+
+[Turn 3]
+User: actually I also want them to be wireless
+Assistant: Great choice! Wireless earbuds under 3,000 PKR — I'd suggest
+           searching "wireless earbuds" on Daraz...
+→ STATE: {budget: 3000, item: Earbuds, preferences: wireless, resolved: no}
+
+[Turn 5 — after sliding window trims Turn 1-2]
+User: what was my budget again?
+Assistant: Your budget is 3,000 PKR! We're looking at wireless earbuds...
+→ Budget survived sliding window via STATE injection ✅
+```
+
+#### Test Transcript — Off-Topic Refusal
+
+```
+User: Can you help me sell my old phone?
+Assistant: I am a shopping assistant and can only help with Daraz products.
+           I can help you find a new phone though! What's your budget?
+→ Selling request correctly refused ✅
+
+User: What's the weather like?
+Assistant: I am a shopping assistant and can only help with Daraz products.
+           What are you looking to buy today?
+→ Weather query correctly refused ✅
+```
+
+#### Test Transcript — Session Isolation (Concurrent Users)
+
+```
+[Session A] User: I need a laptop under 80000
+→ STATE_A: {budget: 80000, item: Laptop}
+
+[Session B] User: I want earbuds under 2000
+→ STATE_B: {budget: 2000, item: Earbuds}
+
+[Session A] User: any recommendations?
+→ Assistant recommends laptops (not earbuds) ✅
+→ STATE_A unchanged, STATE_B unchanged ✅
+```
 
 ---
 
