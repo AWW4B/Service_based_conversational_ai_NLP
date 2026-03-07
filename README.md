@@ -23,9 +23,13 @@ A fully local, CPU-optimised conversational AI system built for Daraz.pk — Pak
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                          User Browser                           │
-│                     React + Vite Frontend                       │
-│   SessionSidebar │ ChatWindow │ MessageBubble │ InputBar        │
-│              WebSocket + REST API  (utils/api.js)               │
+│              React + Vite + Tailwind CSS Frontend               │
+│  App (widget / fullpage mode switch, health check)              │
+│  ChatWidget (floating bubble) │ FullPageChat (standalone view)  │
+│  ChatHeader │ ChatWindow │ MessageBubble │ InputBar              │
+│  SessionSidebar │ QuickActions │ TypingIndicator │ ProductCard  │
+│  useChat.js (WebSocket lifecycle, streaming)                    │
+│              WebSocket + REST API  (utils/api.js + .env)        │
 └────────────────────────────┬────────────────────────────────────┘
                              │ ws://localhost:8000/ws/chat
                              │ http://localhost:8000/
@@ -86,7 +90,7 @@ A fully local, CPU-optimised conversational AI system built for Daraz.pk — Pak
 
 ### Component Responsibilities
 
-**Frontend (`frontend/src/`)** — React + Vite chat interface. `SessionSidebar` displays previous chats loaded from the backend. `ChatWindow` + `MessageBubble` handle real-time streaming display. `useChat.js` manages WebSocket lifecycle. `InputBar` is disabled automatically when session `status` reaches `"ended"`.
+**Frontend (`frontend/src/`)** — React + Vite + Tailwind CSS chat interface with `framer-motion` animations and `lucide-react` icons. Two UI modes: **widget** (floating chat bubble via `ChatWidget`) and **fullpage** (standalone chat via `FullPageChat`), toggled from `App.jsx` which also runs a health check on mount. `ChatHeader` renders the branded top bar with reset, minimize, close, and history-toggle buttons. `ChatWindow` + `MessageBubble` handle real-time streaming display. `SessionSidebar` displays previous chats loaded from the backend. `QuickActions` provides one-click shopping category prompts. `TypingIndicator` shows an animated dot indicator while the model generates. `ProductCard` renders product recommendation cards. `useChat.js` manages the persistent WebSocket connection, token streaming buffer, welcome message fetch, and auto-reconnect. `InputBar` is disabled automatically when session `status` reaches `"ended"`. API base URLs are configurable via `frontend/.env` (`VITE_API_BASE_URL`, `VITE_WS_BASE_URL`).
 
 **Backend API (`backend/app/api/routes.py`)** — FastAPI service exposing REST (`/chat`), WebSocket (`/ws/chat`), session history (`/sessions`), and debug endpoints. All inference runs inside a `ThreadPoolExecutor(max_workers=1)` to keep llama-cpp-python single-threaded while remaining async-compatible.
 
@@ -396,6 +400,46 @@ Triggers a dummy inference call to initialise the KV cache. Call once after serv
 
 *Generated via `locust -f backend/test/locust.py --host=http://localhost:8000`.*
 
+---
+
+### Machine B — Intel Core i5-1235U (Docker on WSL2)
+
+> Tested on 12th Gen Intel Core i5-1235U (12 threads), 10GB RAM, CPU-only inference inside Docker on WSL2, 4 inference threads (`N_THREADS = 4`).
+
+#### Inference Latency
+
+| Metric | Value |
+|---|---|
+| Average latency | 14045.52 ms |
+| Minimum latency | 7018.09 ms |
+| Maximum latency | 28908.65 ms |
+| P50 latency | 8161.55 ms |
+| P95 latency | 28908.65 ms |
+| Cold start (first inference) | ~28909 ms |
+
+*Generated via `POST /benchmark?runs=5`. Higher latency due to Docker + WSL2 overhead and CPU architecture differences.*
+
+#### Stress Test Results (Locust)
+
+| Metric | Value |
+|---|---|
+| Concurrent users tested | 10 |
+| Total requests | 19 |
+| Requests per second | ~0.20 |
+| Average response time | 3702 ms |
+| Failure rate | 15.79% |
+
+| Endpoint | Requests | Failures | Avg (ms) | Min (ms) | Max (ms) |
+|---|---|---|---|---|---|
+| POST /chat [shopping query] | 2 | 2 (100%) | 4175 | 3480 | 4871 |
+| GET /health | 5 | 1 (20%) | 4058 | 1582 | 5782 |
+| GET /session/welcome | 10 | 0 (0%) | 3489 | 118 | 7514 |
+| GET /sessions | 2 | 0 (0%) | 3409 | 2821 | 3996 |
+
+*Generated via `locust -f backend/test/locust.py --host=http://localhost:8000 --headless -u 10 -r 2 --run-time 60s`. Chat failures are caused by inference queueing behind the single-threaded model worker under concurrent load.*
+
+---
+
 ### Context Memory Accuracy
 
 | Test | Result |
@@ -433,39 +477,50 @@ Service_based_conversational_ai_NLP/
 ├── backend/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── routes.py          # REST + WebSocket endpoints
+│   │   │   └── routes.py              # REST + WebSocket endpoints, benchmark
 │   │   ├── core/
-│   │   │   └── config.py          # System prompt, ChatML builder, constants
+│   │   │   └── config.py              # System prompt, ChatML builder, constants
 │   │   ├── llm/
-│   │   │   └── engine.py          # Streaming LLM pipeline, lifecycle guards
+│   │   │   └── engine.py              # Streaming LLM pipeline, lifecycle guards
 │   │   ├── memory/
-│   │   │   ├── context.py         # Session store, sliding window, STATE extraction
-│   │   │   └── database.py        # SQLite CRUD (sessions + messages tables)
-│   │   └── main.py                # FastAPI app, startup hooks (init_sessions_from_db)
+│   │   │   ├── context.py             # Session store, sliding window, STATE extraction
+│   │   │   └── database.py            # SQLite CRUD (sessions + messages tables)
+│   │   └── main.py                    # FastAPI app, lifespan hooks, CORS, static serving
 │   ├── test/
-│   │   └── locust.py              # Stress testing
-│   ├── Dockerfile
+│   │   └── locust.py                  # Locust stress testing
+│   ├── Dockerfile                     # Python 3.11-slim + llama-cpp build
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
+│   │   ├── App.jsx                    # Mode switch (widget / fullpage), health check
+│   │   ├── main.jsx                   # React entry point
+│   │   ├── index.css                  # Tailwind base + custom animations
 │   │   ├── components/
-│   │   │   ├── SessionSidebar.jsx # Chat history panel (calls GET /sessions)
-│   │   │   ├── ChatWindow.jsx     # Message display
-│   │   │   ├── MessageBubble.jsx  # Individual message rendering
-│   │   │   ├── InputBar.jsx       # Disabled on status = "ended"
-│   │   │   └── ...
+│   │   │   ├── ChatWidget.jsx         # Floating chat bubble (framer-motion)
+│   │   │   ├── FullPageChat.jsx       # Standalone full-page chat view
+│   │   │   ├── ChatHeader.jsx         # Branded header (reset, minimize, history)
+│   │   │   ├── ChatWindow.jsx         # Message list + auto-scroll
+│   │   │   ├── MessageBubble.jsx      # Individual message rendering
+│   │   │   ├── InputBar.jsx           # Disabled on status = "ended"
+│   │   │   ├── SessionSidebar.jsx     # Chat history panel (calls GET /sessions)
+│   │   │   ├── QuickActions.jsx       # One-click shopping category prompts
+│   │   │   ├── TypingIndicator.jsx    # Animated dot indicator during generation
+│   │   │   └── ProductCard.jsx        # Product recommendation card
 │   │   ├── hooks/
-│   │   │   └── useChat.js         # WebSocket lifecycle management
+│   │   │   └── useChat.js             # WebSocket lifecycle, streaming, reconnect
 │   │   └── utils/
-│   │       └── api.js             # REST + WS helpers
-│   ├── Dockerfile
+│   │       └── api.js                 # REST + WS helpers (configurable via .env)
+│   ├── .env                           # VITE_API_BASE_URL, VITE_WS_BASE_URL
+│   ├── Dockerfile                     # Node 20 build → Nginx alpine serve
+│   ├── vite.config.js
+│   ├── eslint.config.js
 │   └── package.json
 ├── data/
-│   └── sessions.db                # SQLite database (auto-created)
+│   └── sessions.db                    # SQLite database (auto-created, volume-mounted)
 ├── models/
-│   └── qwen2.5-3b-instruct-q4_k_m.gguf   # Model file (not in git)
-├── Postman_Collection.json        # API test collection
-├── docker-compose.yml
+│   └── qwen2.5-3b-instruct-q4_k_m.gguf  # Model file (not in git)
+├── Postman_Collection.json            # API test collection (5 requests)
+├── docker-compose.yml                 # Backend + Frontend services
 └── README.md
 ```
 

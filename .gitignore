@@ -210,3 +210,16 @@ __marimo__/
 # Model files
 *.gguf
 models/*.gguf
+
+# Database files
+*.db
+
+# Postman (keep Postman_Collection.json, ignore generated files)
+.postman/
+collections/
+environments/
+flows/
+globals/
+specs/
+locust_results*
+data/*.db

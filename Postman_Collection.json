@@ -1,1 +1,70 @@
-{"info":{"name":"Daraz Assistant API","description":"Postman collection for NLP Assignment Phase IV & V. Evaluates REST fallback, session management, and benchmarking.","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[{"name":"1. Health Check","request":{"method":"GET","url":{"raw":"http://localhost:8000/health","host":["http://localhost:8000"],"path":["health"]}}},{"name":"2. Chat (REST)","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"url":{"raw":"http://localhost:8000/chat","host":["http://localhost:8000"],"path":["chat"]},"body":{"mode":"raw","raw":"{\n  \"message\": \"I need a laptop under 50000 PKR\"\n}"}}},{"name":"3. Get All Sessions","request":{"method":"GET","url":{"raw":"http://localhost:8000/sessions","host":["http://localhost:8000"],"path":["sessions"]}}},{"name":"4. Reset Session","request":{"method":"POST","header":[{"key":"Content-Type","value":"application/json"}],"url":{"raw":"http://localhost:8000/reset","host":["http://localhost:8000"],"path":["reset"]},"body":{"mode":"raw","raw":"{\n  \"session_id\": \"test-session-123\"\n}"}}},{"name":"5. Run Benchmark","request":{"method":"POST","url":{"raw":"http://localhost:8000/benchmark?runs=3","host":["http://localhost:8000"],"path":["benchmark"],"query":[{"key":"runs","value":"3"}]}}}]}
+{
+  "info": {
+    "_postman_id": "e8a8d4a1-7d3c-4c96-8fd9-46c7a9a165c5",
+    "name": "Daraz Assistant API",
+    "description": "Postman collection for NLP Assignment. Evaluates REST fallback, session management, and benchmarking.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    }
+  },
+  "item": [
+    {
+      "name": "1. Health Check",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "2. Chat (REST)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/chat",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message\": \"I need a laptop under 50000 PKR\"\n}"
+        }
+      }
+    },
+    {
+      "name": "3. Get All Sessions",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/sessions"
+      }
+    },
+    {
+      "name": "4. Reset Session",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/reset",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{session_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "5. Run Benchmark",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/benchmark?runs=3"
+      }
+    }
+  ]
+}
