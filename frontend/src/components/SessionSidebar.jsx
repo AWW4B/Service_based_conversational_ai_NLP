@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { MessageSquare, Trash2, Plus, Clock, ChevronLeft } from 'lucide-react';
 import { getSessions, deleteSession } from '../utils/api';
 
-export default function SessionSidebar({ currentSessionId, onLoadSession, onNewChat, isOpen, onClose }) {
+export default function SessionSidebar({ currentSessionId, onLoadSession, onNewChat, isOpen, onClose, turnsMax = 10 }) {
     const [sessions, setSessions] = useState([]);
     const [loading, setLoading] = useState(false);
 
@@ -132,7 +132,7 @@ export default function SessionSidebar({ currentSessionId, onLoadSession, onNewC
                                                             </span>
                                                             <span className="text-[10px] text-gray-300">•</span>
                                                             <span className="text-[10px] text-gray-400">
-                                                                {session.turns ?? 0}/{10} turns
+                                                                {session.turns ?? 0}/{turnsMax} turns
                                                             </span>
                                                             <span className="text-[10px] text-gray-300">•</span>
                                                             <span className="text-[10px] text-gray-400">

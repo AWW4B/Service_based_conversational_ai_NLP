@@ -13,85 +13,89 @@ export function useChat() {
     const wsRef = useRef(null);
     const streamBuf = useRef('');
 
-    // Persistent WebSocket connection
+    // Persistent WebSocket connection with correct reconnect logic
     useEffect(() => {
-        const ws = new WebSocket(`${WS_BASE}/ws/chat`);
-        wsRef.current = ws;
+        let cancelled = false;
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+        const connect = () => {
+            if (cancelled) return;
+            const ws = new WebSocket(`${WS_BASE}/chat`);
+            wsRef.current = ws;
 
-            if (data.error) {
-                setMessages(prev => [...prev, {
-                    role: 'assistant',
-                    content: data.error,
-                    timestamp: Date.now(),
-                    isError: true,
-                }]);
-                setIsLoading(false);
-                return;
-            }
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
 
-            if (!data.done) {
-                // Streaming token — append to current assistant bubble
-                streamBuf.current += data.token;
-                const partial = streamBuf.current;
-                setMessages(prev => {
-                    const last = prev[prev.length - 1];
-                    if (last && last.role === 'assistant' && last.streaming) {
-                        return [...prev.slice(0, -1), { ...last, content: partial }];
-                    }
-                    // First token — create streaming bubble
-                    return [...prev, { role: 'assistant', content: partial, timestamp: Date.now(), streaming: true }];
-                });
-            } else {
-                // Final chunk — finalise the bubble
-                const finalContent = data.cancelled ? (streamBuf.current || '[Cancelled]') : (data.full_response || streamBuf.current);
-                streamBuf.current = '';
+                if (data.error) {
+                    setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: data.error,
+                        timestamp: Date.now(),
+                        isError: true,
+                    }]);
+                    setIsLoading(false);
+                    return;
+                }
 
-                setMessages(prev => {
-                    const last = prev[prev.length - 1];
-                    if (last && last.role === 'assistant' && last.streaming) {
-                        return [...prev.slice(0, -1), {
-                            ...last,
+                if (!data.done) {
+                    // Streaming token — append to current assistant bubble
+                    streamBuf.current += data.token;
+                    const partial = streamBuf.current;
+                    setMessages(prev => {
+                        const last = prev[prev.length - 1];
+                        if (last && last.role === 'assistant' && last.streaming) {
+                            return [...prev.slice(0, -1), { ...last, content: partial }];
+                        }
+                        // First token — create streaming bubble
+                        return [...prev, { role: 'assistant', content: partial, timestamp: Date.now(), streaming: true }];
+                    });
+                } else {
+                    // Final chunk — finalise the bubble
+                    const finalContent = data.cancelled ? (streamBuf.current || '[Cancelled]') : (data.full_response || streamBuf.current);
+                    streamBuf.current = '';
+
+                    setMessages(prev => {
+                        const last = prev[prev.length - 1];
+                        if (last && last.role === 'assistant' && last.streaming) {
+                            return [...prev.slice(0, -1), {
+                                ...last,
+                                content: finalContent,
+                                streaming: false,
+                                cancelled: !!data.cancelled,
+                                latency_ms: data.latency_ms,
+                            }];
+                        }
+                        return [...prev, {
+                            role: 'assistant',
                             content: finalContent,
-                            streaming: false,
+                            timestamp: Date.now(),
                             cancelled: !!data.cancelled,
                             latency_ms: data.latency_ms,
                         }];
-                    }
-                    return [...prev, {
-                        role: 'assistant',
-                        content: finalContent,
-                        timestamp: Date.now(),
-                        cancelled: !!data.cancelled,
-                        latency_ms: data.latency_ms,
-                    }];
-                });
+                    });
 
-                if (data.latency_ms) setLatency(data.latency_ms);
-                if (data.status) setStatus(data.status);
-                if (data.turns_used != null) setTurnsUsed(data.turns_used);
-                if (data.turns_max != null) setTurnsMax(data.turns_max);
-                setIsLoading(false);
-            }
-        };
-
-        ws.onclose = () => {
-            // Attempt reconnect after brief delay
-            setTimeout(() => {
-                if (wsRef.current === ws) {
-                    const newWs = new WebSocket(`${WS_BASE}/ws/chat`);
-                    newWs.onmessage = ws.onmessage;
-                    newWs.onclose = ws.onclose;
-                    wsRef.current = newWs;
+                    if (data.latency_ms) setLatency(data.latency_ms);
+                    if (data.status) setStatus(data.status);
+                    if (data.turns_used != null) setTurnsUsed(data.turns_used);
+                    if (data.turns_max != null) setTurnsMax(data.turns_max);
+                    setIsLoading(false);
                 }
-            }, 2000);
+            };
+
+            ws.onclose = () => {
+                // Reconnect after brief delay — connect() always creates fresh handlers
+                setTimeout(connect, 2000);
+            };
         };
+
+        connect();
 
         return () => {
-            wsRef.current = null;
-            ws.close();
+            cancelled = true;
+            if (wsRef.current) {
+                wsRef.current.onclose = null; // prevent reconnect on intentional unmount
+                wsRef.current.close();
+                wsRef.current = null;
+            }
         };
     }, []);
 

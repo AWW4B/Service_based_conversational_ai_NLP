@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
-import { ShoppingBag, RotateCcw, X, Minus, History } from 'lucide-react';
+import { ShoppingBag, RotateCcw, X, Minus, History, Volume2, VolumeX } from 'lucide-react';
 
-export default function ChatHeader({ onReset, onMinimize, onClose, onToggleHistory }) {
+export default function ChatHeader({ onReset, onMinimize, onClose, onToggleHistory, autoPlay, onToggleAutoPlay }) {
     return (
         <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -27,6 +27,29 @@ export default function ChatHeader({ onReset, onMinimize, onClose, onToggleHisto
 
             {/* Right: Actions */}
             <div className="flex items-center gap-1">
+
+                {/* Auto-play voice toggle */}
+                {onToggleAutoPlay && (
+                    <motion.button
+                        onClick={onToggleAutoPlay}
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.9 }}
+                        title={autoPlay ? 'Auto-speak ON — click to disable' : 'Auto-speak OFF — click to enable'}
+                        className={`
+                            p-2 rounded-full transition-all duration-200 relative
+                            ${autoPlay
+                                ? 'bg-white/30 text-white shadow-inner'
+                                : 'hover:bg-white/20 text-white/70 hover:text-white'}
+                        `}
+                    >
+                        {autoPlay ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                        {/* ON indicator dot */}
+                        {autoPlay && (
+                            <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-green-300" />
+                        )}
+                    </motion.button>
+                )}
+
                 {onToggleHistory && (
                     <button
                         onClick={onToggleHistory}

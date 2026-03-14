@@ -223,3 +223,5 @@ globals/
 specs/
 locust_results*
 data/*.db
+
+a3.pdf
